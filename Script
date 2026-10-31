@@ -1,0 +1,76 @@
+// Paste over your whole Apps Script file. Edit the 3 lines marked EDIT.
+
+const FOLDER_ID = 'EDIT_PASTE_FOLDER_ID';
+const NEO4J_URI = 'EDIT_https://19cc8149.databases.neo4j.io';
+const NEO4J_PASSWORD = 'aaa';
+
+function neo4jHeaders() {
+  return {
+    Authorization: 'Basic ' + Utilities.base64Encode('neo4j:' + NEO4J_PASSWORD),
+    'Content-Type': 'application/json'
+  };
+}
+
+function runCypher(statement, parameters) {
+  const res = UrlFetchApp.fetch(NEO4J_URI + '/db/neo4j/query/v2', {
+    method: 'post',
+    headers: neo4jHeaders(),
+    payload: JSON.stringify({ statement: statement, parameters: parameters || {} }),
+    muteHttpExceptions: true
+  });
+  return res.getContentText();
+}
+
+function testNeo4jConnection() {
+  Logger.log(runCypher('MATCH (f:File) RETURN count(f) AS files'));
+}
+
+function crawlAndPush() {
+  const folder = DriveApp.getFolderById(FOLDER_ID);
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  sheet.clear();
+  const data = [['Folder Path', 'File Name', 'Owner Email', 'Size (MB)', 'File URL', 'Last Updated']];
+  let pushed = 0;
+
+  function crawl(fol, path) {
+    const files = fol.getFiles();
+    while (files.hasNext()) {
+      const file = files.next();
+      let owner = 'unknown@unknown.com';
+      try { if (file.getOwners().length > 0) owner = file.getOwners()[0].getEmail(); } catch (e) {}
+
+      data.push([path, file.getName(), owner, file.getSize() / (1024 * 1024), file.getUrl(), file.getLastUpdated()]);
+
+      const out = runCypher(
+        'MERGE (u:User {email:o}) MERGE (f:File {id:i}) SET f.title=n,f.link=n, f.link=n,f.link=w ' +
+        'MERGE (u)-[:OWNS]->(f) MERGE (f)-[:LOCATED_IN]->(:Folder {id:$fid})',
+        { o: owner, i: file.getId(), n: file.getName(), w: file.getUrl(), fid: fol.getId() });
+      if (out.indexOf('error') === -1) pushed++;
+    }
+    const subs = fol.getFolders();
+    while (subs.hasNext()) {
+      const sub = subs.next();
+      crawl(sub, path + '/' + sub.getName());
+    }
+  }
+
+  try {
+    crawl(folder, folder.getName());
+    sheet.getRange(1, 1, data.length, data[0].length).setValues(data);
+    Logger.log('DONE: ' + (data.length - 1) + ' files, ' + pushed + ' pushed to Neo4j');
+  } catch (err) {
+    Logger.log('ERROR: ' + err.message);
+  }
+}
+
+function runAudit() {
+  const out = runCypher(
+    "MATCH (u:User)-[:OWNS]->(f:File) WHERE NOT u.email ENDS WITH $dom " +
+    "RETURN u.email AS owner, collect(f.title) AS files",
+    { dom: '@yourcompany.com' });
+  Logger.log('AUDIT: ' + out);
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let audit = ss.getSheetByName('Audit') || ss.insertSheet('Audit');
+  audit.clear();
+  audit.getRange(1, 1, 2, 1).setValues([['Audit Result'], [out]]);
+}
