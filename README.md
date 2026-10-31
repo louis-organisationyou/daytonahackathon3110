@@ -45,3 +45,6 @@ Run the Cypher query located in audit.cypher to generate the migration report.
 v2: Connect live summarize.py outputs to write (:Topic) nodes back to Neo4j.
 
 v3: Daytona-scheduled full-Drive crawls + automated Google Drive file duplication to bypass ownership locks.
+
+***
+demo displayed only on end user PC.
